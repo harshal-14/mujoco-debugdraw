@@ -1,0 +1,53 @@
+<mujoco model="debugdraw_arm">
+  <!-- A plain 3-DoF arm. Nothing in this file exists for debugging:
+       every marker in the demo is drawn by mujoco_debugdraw at runtime. -->
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+
+  <visual>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.6 0.6 0.6"/>
+    <global offwidth="960" offheight="640"/>
+  </visual>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.18 0.2 0.23" rgb2="0.14 0.15 0.18"
+             width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0"/>
+    <material name="link" rgba="0.72 0.74 0.78 1"/>
+    <material name="joint" rgba="0.25 0.27 0.3 1"/>
+  </asset>
+
+  <default>
+    <joint damping="2" armature="0.05"/>
+    <geom contype="0" conaffinity="0"/>
+  </default>
+
+  <worldbody>
+    <light pos="0.3 -0.6 1.8" dir="-0.2 0.3 -1" diffuse="0.7 0.7 0.7"/>
+    <geom name="floor" type="plane" size="1.5 1.5 0.05" material="grid" contype="1" conaffinity="1"/>
+    <geom name="pedestal" type="cylinder" pos="0 0 0.03" size="0.08 0.03" material="joint"/>
+
+    <body name="base" pos="0 0 0.06">
+      <joint name="yaw" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
+      <geom type="cylinder" size="0.05 0.03" material="joint"/>
+      <body name="upper_arm" pos="0 0 0.05">
+        <joint name="shoulder" type="hinge" axis="0 1 0" range="-2.0 2.0"/>
+        <geom type="capsule" fromto="0 0 0 0 0 0.3" size="0.03" material="link"/>
+        <body name="forearm" pos="0 0 0.3">
+          <joint name="elbow" type="hinge" axis="0 1 0" range="-2.6 2.6"/>
+          <geom type="capsule" fromto="0 0 0 0.28 0 0" size="0.025" material="link"/>
+          <body name="end_effector" pos="0.28 0 0">
+            <geom type="sphere" size="0.035" material="joint"/>
+            <site name="gripper_site" pos="0.04 0 0" size="0.01" rgba="1 1 1 0"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="yaw_motor" joint="yaw" gear="1" ctrlrange="-30 30"/>
+    <motor name="shoulder_motor" joint="shoulder" gear="1" ctrlrange="-30 30"/>
+    <motor name="elbow_motor" joint="elbow" gear="1" ctrlrange="-30 30"/>
+  </actuator>
+</mujoco>
