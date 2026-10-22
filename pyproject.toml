@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mujoco-debugdraw"
-version = "0.1.0"
+version = "0.2.0"
 description = "Draw targets, coordinate frames, vectors, paths and labels in the MuJoCo Python viewer — no MJCF edits, no OpenGL."
 readme = "README.md"
 license = "MIT"
@@ -33,7 +33,7 @@ Issues = "https://github.com/harshalbhat/mujoco-debugdraw/issues"
 packages = ["src/mujoco_debugdraw"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "examples", "README.md", "LICENSE", "SPEC.md"]
+include = ["src", "tests", "examples", "README.md", "LICENSE", "SPEC.md", "SPEC_PHASE2.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

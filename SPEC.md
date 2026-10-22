@@ -711,13 +711,7 @@ These are **not** Phase 1 requirements.
 
 ### Phase 2
 
-- `sphere()` and `box()` primitives.
-- Contact normal and contact-force arrows.
-- `body_com()` center-of-mass marker.
-- Joint-axis visualization.
-- Better fixed screen-space text overlays.
-- Marker lifetime controls such as `ttl_frames`.
-- Persistent keyed objects without calling `clear()` every frame.
+Specified in [SPEC_PHASE2.md](SPEC_PHASE2.md): `box()`, `frame_at()`, `body_com()`, `joint_axis()`, `contacts()`, `ttl_frames`, and `remove()`. `sphere()` and the text-overlay rework were dropped there, and §1 of that file says why.
 
 ### Phase 3
 

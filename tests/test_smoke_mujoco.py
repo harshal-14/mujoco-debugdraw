@@ -17,6 +17,16 @@ def draw_everything(draw, data):
     draw.text(f"t = {data.time:.2f}")
 
 
+def draw_phase2(draw, data):
+    draw.box([0.5, 0.3, 0.2], [0.1, 0.1, 0.2], rotation=data.xmat[1], color=[1, 0.5, 0, 0.3])
+    draw.frame_at(data.xpos[2], data.xmat[2], alpha=0.5)
+    draw.body_com("link")
+    draw.body_com(0, subtree=True)
+    draw.joint_axis("hinge")
+    draw.contacts()
+    draw.contacts(body="box", ttl_frames=1)
+
+
 def test_scene_geom_contents(model, data, scene):
     draw = DebugDraw(model, data, scene)
     draw_everything(draw, data)
@@ -119,6 +129,7 @@ def _rollout(steps, draw_each_step):
         if draw:
             scn.ngeom = 0
             draw_everything(draw, d)
+            draw_phase2(draw, d)
             draw.sync()
     return d
 
@@ -126,6 +137,7 @@ def _rollout(steps, draw_each_step):
 def test_dynamics_identical_with_and_without_drawing():
     control = _rollout(300, draw_each_step=False)
     drawn = _rollout(300, draw_each_step=True)
+    assert control.ncon > 0  # the box has landed, so contacts() had work to do
     assert np.all(np.isfinite(drawn.qpos))
     np.testing.assert_array_equal(control.qpos, drawn.qpos)
     np.testing.assert_array_equal(control.qvel, drawn.qvel)
@@ -137,5 +149,19 @@ def test_model_is_not_mutated(model, data, scene):
     draw = DebugDraw(model, data, scene)
     for _ in range(10):
         draw_everything(draw, data)
+        draw_phase2(draw, data)
         draw.sync()
     assert (model.ngeom, model.nsite, model.nbody) == (ngeom, nsite, nbody)
+
+
+def test_point_from_data_view_is_a_snapshot(model, data, scene):
+    # np.asarray would alias data.xpos; primitives must keep the drawn value.
+    draw = DebugDraw(model, data, scene)
+    draw.point(data.xpos[2], key="p")
+    draw.arrow(data.xpos[2], data.xaxis[0], key="a")
+    draw.line(data.xpos[1:3], key="l")
+    queued = [s.start.copy() for s in draw.geom_specs()]
+    data.qpos[0] = -1.0
+    mujoco.mj_forward(model, data)
+    for q, s in zip(queued, draw.geom_specs()):
+        assert_close(s.start, q)

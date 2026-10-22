@@ -9,10 +9,17 @@ import numpy as np
 # Vectors shorter than this are treated as zero-length and not drawn.
 ZERO_EPS = 1e-9
 
+# as_rotation accepts R when the Frobenius norm of R^T R - I is below this.
+ROTATION_TOL = 1e-5
+
+
+# The validators below copy their input, so a primitive built from a view
+# into MjData (e.g. data.xpos[i]) keeps the value it had when it was drawn.
+
 
 def as_vec3(value: object, name: str = "value") -> np.ndarray:
     """Return ``value`` as a finite float64 array of shape ``(3,)`` or raise ``ValueError``."""
-    arr = np.asarray(value, dtype=np.float64)
+    arr = np.array(value, dtype=np.float64)
     if arr.shape != (3,):
         raise ValueError(f"{name} must have shape (3,), got shape {arr.shape}.")
     if not np.all(np.isfinite(arr)):
@@ -20,9 +27,31 @@ def as_vec3(value: object, name: str = "value") -> np.ndarray:
     return arr
 
 
+def as_rotation(value: object, name: str = "rotation") -> np.ndarray:
+    """Return ``value`` as a ``(3, 3)`` rotation matrix or raise ``ValueError``.
+
+    The *columns* of a ``(3, 3)`` input are the local X/Y/Z axes in world
+    coordinates, as in ``data.xmat[i].reshape(3, 3)``. A flat ``(9,)`` input
+    is read row-major, like ``data.xmat[i]`` itself. Reflections and
+    non-orthonormal matrices are rejected.
+    """
+    arr = np.array(value, dtype=np.float64)
+    if arr.shape == (9,):
+        arr = arr.reshape(3, 3)
+    if arr.shape != (3, 3):
+        raise ValueError(f"{name} must have shape (3, 3) or (9,), got shape {arr.shape}.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{name} must contain only finite numbers.")
+    if np.linalg.norm(arr.T @ arr - np.eye(3)) >= ROTATION_TOL:
+        raise ValueError(f"{name} must be orthonormal (R.T @ R == I).")
+    if np.linalg.det(arr) <= 0:
+        raise ValueError(f"{name} must be a proper rotation (det > 0); got a reflection.")
+    return arr
+
+
 def as_points(value: object, name: str = "points") -> np.ndarray:
     """Return ``value`` as a finite float64 array of shape ``(N, 3)`` with ``N >= 2``."""
-    arr = np.asarray(value, dtype=np.float64)
+    arr = np.array(value, dtype=np.float64)
     if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError(f"{name} must have shape (N, 3), got shape {arr.shape}.")
     if arr.shape[0] < 2:

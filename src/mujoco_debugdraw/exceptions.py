@@ -12,7 +12,7 @@ class InvalidColorError(DebugDrawError, ValueError):
 
 
 class UnknownTargetError(DebugDrawError, KeyError):
-    """A body or site name/ID passed to ``frame()`` does not exist in the model."""
+    """A body, site or joint name/ID passed to a drawing method does not exist in the model."""
 
     def __str__(self) -> str:  # KeyError wraps messages in quotes; undo that.
         return str(self.args[0]) if self.args else ""

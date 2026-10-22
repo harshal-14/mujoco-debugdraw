@@ -24,22 +24,25 @@ AXIS_COLORS: tuple[RGBA, RGBA, RGBA] = (
 
 @dataclass
 class Primitive:
-    kind: str  # "point" | "line" | "arrow" | "frame" | "text"
+    kind: str  # "point" | "line" | "arrow" | "frame" | "box" | "contacts" | "text"
     key: Optional[str]
     color: RGBA
     payload: dict[str, Any] = field(default_factory=dict)
+    ttl: Optional[int] = None  # sync() calls left before removal; None = until clear()
 
 
 @dataclass
 class GeomSpec:
-    """One visual geom. ``kind`` is "sphere", "line" or "arrow"."""
+    """One visual geom. ``kind`` is "sphere", "box", "line" or "arrow"."""
 
     kind: str
     rgba: RGBA
-    start: np.ndarray  # sphere center, or connector start
+    start: np.ndarray  # sphere/box center, or connector start
     end: Optional[np.ndarray] = None  # connector end
-    size: float = 0.0  # sphere radius, line width (px), or arrow shaft radius
+    # sphere radius, box half-sizes (3,), line width (px), or arrow shaft radius
+    size: Any = 0.0
     label: str = ""
+    mat: Optional[np.ndarray] = None  # box orientation, row-major 3x3 as (9,)
 
 
 def expand(prim: Primitive) -> list[GeomSpec]:
@@ -66,12 +69,27 @@ def expand(prim: Primitive) -> list[GeomSpec]:
     if prim.kind == "frame":
         axes = frame_axes(p["position"], p["xmat"], p["scale"])
         width = p["width"]
+        alpha = p.get("alpha", 1.0)
         out = []
         for i, (a, b) in enumerate(axes):
-            out.append(
-                GeomSpec("arrow", AXIS_COLORS[i], a, b, size=width, label=label if i == 0 else "")
-            )
+            rgba = AXIS_COLORS[i][:3] + (alpha,)
+            out.append(GeomSpec("arrow", rgba, a, b, size=width, label=label if i == 0 else ""))
         return out
+
+    if prim.kind == "box":
+        return [
+            GeomSpec(
+                "box", prim.color, p["center"], size=p["half_size"], label=label,
+                mat=p["rotation"].flatten(),
+            )
+        ]
+
+    if prim.kind == "contacts":
+        return [
+            GeomSpec("arrow", rgba, start, end, size=p["width"])
+            for start, end, rgba in p["arrows"]
+            if not is_zero(end - start)
+        ]
 
     if prim.kind == "text":
         return []
