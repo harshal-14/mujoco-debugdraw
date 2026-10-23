@@ -9,16 +9,26 @@ script fetch the two robot folders (a sparse git clone, ~55 MB) into
 Run:
     python examples/manipulator_demo.py                 # Franka Panda, passive viewer
     python examples/manipulator_demo.py --robot iiwa    # KUKA LBR iiwa 14
+    python examples/manipulator_demo.py --no-bumper     # free space, no contacts
     MUJOCO_GL=egl python examples/manipulator_demo.py --robot panda --record assets/panda.gif
 (macOS: use mjpython for the interactive viewer)
 
 What's drawn (all at runtime; the Menagerie XML is loaded as-is):
-  cyan      planned TCP path (figure-eight)
+  cyan      planned TCP path (figure-eight), inside a faint blue workspace box   box()
   magenta   actual TCP trail (last ~2 s), so tracking error is visible as a gap
-  lime      current target point, with faint RGB axes for the desired orientation
-  RGB       actual TCP frame (bold) and every link frame (small)
+  lime      target point, with faint RGB axes for the desired orientation      frame_at()
+  RGB       actual TCP frame                                                    frame_at()
+  orange    every arm joint's axis; a joint near its limit is labelled "j4 !"   joint_axis()
+  white     the arm's center of mass                                            body_com()
   yellow    TCP velocity
+  red       contact force on a spring-loaded bumper that the gripper brushes
+            once per lap, plus marks where it touched that expire after 0.5 s  contacts(), ttl_frames
   HUD       position/orientation error, speed, and joint-limit usage per joint
+
+The loop never calls clear(): the plan and box are drawn once, every per-frame
+primitive is keyed, and the contact marks remove themselves.
+
+The bumper is added with MjSpec (MuJoCo >= 3.3); the robot XML is not edited.
 """
 
 from __future__ import annotations
@@ -85,6 +95,14 @@ ROBOTS = {
 }
 
 PERIOD = 6.0  # seconds per figure-eight
+
+# A ball on a soft spring just past the path's +y end. Position servos would jam
+# against a fixed obstacle with hundreds of newtons; the spring keeps the
+# contact force to tens of newtons and the tracking error to a few mm.
+BUMPER_OFFSET = 0.05  # m, ball center beyond the path's +y extreme
+BUMPER_RADIUS = 0.05
+BUMPER_STIFFNESS = 200.0  # N/m
+FORCE_SCALE = 0.005  # m per newton for the contact-force arrows (typically 15-20 N)
 
 
 def menagerie_dir() -> pathlib.Path:
@@ -194,25 +212,42 @@ def limit_bar(frac: float, width: int = 10) -> str:
     return "#" * n + "." * (width - n)
 
 
-def draw_debug(draw: DebugDraw, data, ik: DiffIK, cfg: RobotConfig, path, trail,
-               p_des, R_des, p, R, v, e_pos, e_rot) -> None:
-    draw.clear()
+def draw_static(draw: DebugDraw, cfg: RobotConfig, path) -> None:
+    """Drawn once. These stay queued because the loop never calls clear()."""
     draw.line(path, color="cyan", width=2.0, key="plan")
+    draw.box(cfg.path_center, np.array(cfg.path_size) + 0.03, color=[0.3, 0.6, 1.0, 0.07],
+             key="workspace")
+
+
+def draw_debug(draw: DebugDraw, data, ik: DiffIK, cfg: RobotConfig, trail,
+               p_des, R_des, p, R, v, e_pos, e_rot, mark_frames: int = 30) -> None:
+    """Per-frame drawing. Every call is keyed, so it replaces last frame's version."""
+    model = draw.model
     if len(trail) >= 2:
         draw.line(np.array(trail), color="magenta", width=5.0, key="trail")
 
-    # Target: point + desired orientation (faint axes built from arrows).
+    # Target point + desired orientation (faint), and the actual TCP frame.
     draw.point(p_des, color="lime", size=0.014, label="target", key="target")
-    for i, col in enumerate(([1, .3, .3, .45], [.3, 1, .3, .45], [.3, .5, 1, .45])):
-        draw.arrow(p_des, R_des[:, i], scale=0.07, width=0.003, color=col)
-
-    # Actual TCP frame (bold) and every link frame (small).
-    for i, col in enumerate(("red", "green", "blue")):
-        draw.arrow(p, R[:, i], scale=0.10, width=0.005, color=col)
-    for k in range(1, 8):
-        draw.frame(f"link{k}", scale=0.14, width=0.003)
-
+    draw.frame_at(p_des, R_des, scale=0.07, width=0.003, alpha=0.45, key="target_R")
+    draw.frame_at(p, R, scale=0.10, width=0.005, key="tcp")
     draw.arrow(p, v, scale=0.4, width=0.004, color="yellow", key="vel")
+
+    # Every arm joint's axis (labelled only when near a limit) and the whole arm's COM.
+    lo, hi = ik.jnt_range[:, 0], ik.jnt_range[:, 1]
+    usage = np.abs(data.qpos[:7] - (lo + hi) / 2) / ((hi - lo) / 2)  # 0 = centered, 1 = at a limit
+    for j, u in enumerate(usage):
+        draw.joint_axis(j, scale=0.2, width=0.004, label=f"j{j + 1} !" if u > 0.9 else None,
+                        key=f"axis{j}")
+    draw.body_com(model.body_rootid[model.jnt_bodyid[0]], subtree=True, size=0.02, label="COM",
+                  key="com")
+
+    # Bumper: this frame's contact forces on it, plus unkeyed marks where it was
+    # touched, which expire on their own after mark_frames syncs.
+    if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "bumper") >= 0:
+        draw.contacts(body="bumper", normals=False, force_scale=FORCE_SCALE, force_color="red",
+                      width=0.004, key="bumper_forces")
+        for i in range(data.ncon):
+            draw.point(data.contact[i].pos, color="red", size=0.006, ttl_frames=mark_frames)
 
     rot_err = np.degrees(np.linalg.norm(e_rot))
     draw.text(
@@ -221,23 +256,43 @@ def draw_debug(draw: DebugDraw, data, ik: DiffIK, cfg: RobotConfig, path, trail,
         f"rot err  : {rot_err:6.2f} deg\n"
         f"TCP speed: {np.linalg.norm(v):6.2f} m/s",
         position="top_left",
+        key="hud",
     )
-    lo, hi = ik.jnt_range[:, 0], ik.jnt_range[:, 1]
-    q = data.qpos[:7]
-    usage = np.abs(q - (lo + hi) / 2) / ((hi - lo) / 2)  # 0 = centered, 1 = at a limit
     rows = [f"j{i + 1} [{limit_bar(u)}] {u * 100:3.0f}%{'  !' if u > 0.9 else ''}"
             for i, u in enumerate(usage)]
-    draw.text("joint-limit usage\n" + "\n".join(rows), position="top_right")
-    draw.text("cyan plan | magenta actual | lime target | yellow velocity", position="bottom_left")
+    draw.text("joint-limit usage\n" + "\n".join(rows), position="top_right", key="limits")
+    draw.text("cyan plan | magenta actual | lime target | yellow velocity\n"
+              "orange joint axes | white COM | red bumper contact force (5 mm/N)",
+              position="bottom_left", key="legend")
 
 
 # ------------------------------------------------------------------------------- main
 
 
-def setup(robot: str):
+def add_bumper(spec, cfg: RobotConfig) -> None:
+    pos = cfg.path_center + np.array([0.0, cfg.path_size[1] + BUMPER_OFFSET, 0.0])
+    body = spec.worldbody.add_body(name="bumper", pos=pos)
+    body.add_joint(name="bumper_slide", type=mujoco.mjtJoint.mjJNT_SLIDE, axis=[0, 1, 0],
+                   stiffness=BUMPER_STIFFNESS, damping=5.0)
+    body.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[BUMPER_RADIUS, 0, 0], mass=0.2,
+                  rgba=[0.85, 0.85, 0.85, 1])
+    for key in spec.keys:  # Menagerie's keyframes don't know about the bumper joint
+        if len(key.qpos):
+            key.qpos = list(key.qpos) + [0.0]
+
+
+def setup(robot: str, bumper: bool = True):
     cfg = ROBOTS[robot]
     xml = menagerie_dir() / cfg.folder / cfg.scene
-    model = mujoco.MjModel.from_xml_path(str(xml))
+    if bumper:
+        try:
+            spec = mujoco.MjSpec.from_file(str(xml))
+        except TypeError:  # MuJoCo < 3.3, where from_file is not a classmethod
+            sys.exit("The bumper needs MuJoCo >= 3.3. Upgrade mujoco or pass --no-bumper.")
+        add_bumper(spec, cfg)
+        model = spec.compile()
+    else:
+        model = mujoco.MjModel.from_xml_path(str(xml))
     data = mujoco.MjData(model)
     data.qpos[:7] = cfg.home
     data.ctrl[:7] = cfg.home
@@ -259,10 +314,10 @@ def step_frame(model, data, ik, cfg, trail, n_steps):
     return (p_des, R_des) + out
 
 
-def run_viewer(robot: str) -> None:
+def run_viewer(robot: str, bumper: bool) -> None:
     import mujoco.viewer
 
-    cfg, model, data, ik, path = setup(robot)
+    cfg, model, data, ik, path = setup(robot, bumper)
     trail: collections.deque = collections.deque(maxlen=120)
     steps = max(1, int(round((1 / 60) / model.opt.timestep)))
     with mujoco.viewer.launch_passive(model, data) as viewer:
@@ -270,22 +325,24 @@ def run_viewer(robot: str) -> None:
         viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = dist, az, el
         viewer.cam.lookat[:] = look
         draw = DebugDraw(model, data, viewer)
+        draw_static(draw, cfg, path)
         while viewer.is_running():
             t0 = time.time()
             state = step_frame(model, data, ik, cfg, trail, steps)
-            draw_debug(draw, data, ik, cfg, path, trail, *state)
+            draw_debug(draw, data, ik, cfg, trail, *state, mark_frames=30)  # 0.5 s at 60 fps
             draw.sync()
             viewer.sync()
             time.sleep(max(0.0, steps * model.opt.timestep - (time.time() - t0)))
 
 
-def record(robot: str, out: pathlib.Path, width: int = 640, height: int = 440, fps: int = 15) -> None:
+def record(robot: str, out: pathlib.Path, bumper: bool = True, width: int = 640, height: int = 440,
+           fps: int = 15) -> None:
     from PIL import Image
 
     sys.path.insert(0, str(HERE))
     from record_demo import hud  # same Pillow HUD compositor as the README GIF
 
-    cfg, model, data, ik, path = setup(robot)
+    cfg, model, data, ik, path = setup(robot, bumper)
     trail: collections.deque = collections.deque(maxlen=int(2.0 * fps))
     renderer = mujoco.Renderer(model, height, width)
     cam = mujoco.MjvCamera()
@@ -293,6 +350,7 @@ def record(robot: str, out: pathlib.Path, width: int = 640, height: int = 440, f
     cam.distance, cam.azimuth, cam.elevation = dist, az, el
     cam.lookat[:] = look
     draw = DebugDraw(model, data, renderer)
+    draw_static(draw, cfg, path)
     steps = int(round(1.0 / (fps * model.opt.timestep)))
 
     for _ in range(int(1.5 * fps)):  # settle onto the path before recording
@@ -300,7 +358,7 @@ def record(robot: str, out: pathlib.Path, width: int = 640, height: int = 440, f
     frames = []
     for _ in range(int(PERIOD * fps)):
         state = step_frame(model, data, ik, cfg, trail, steps)
-        draw_debug(draw, data, ik, cfg, path, trail, *state)
+        draw_debug(draw, data, ik, cfg, trail, *state, mark_frames=max(1, fps // 2))
         renderer.update_scene(data, camera=cam)
         draw.sync()
         frames.append(hud(renderer.render(), draw.texts, width, height, font_size=13))
@@ -318,11 +376,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--robot", choices=sorted(ROBOTS), default="panda")
     ap.add_argument("--record", type=pathlib.Path, help="render a GIF offscreen instead of opening the viewer")
+    ap.add_argument("--no-bumper", dest="bumper", action="store_false",
+                    help="leave out the spring-loaded bumper (free space, no contacts)")
     args = ap.parse_args()
     if args.record:
-        record(args.robot, args.record)
+        record(args.robot, args.record, bumper=args.bumper)
     else:
-        run_viewer(args.robot)
+        run_viewer(args.robot, args.bumper)
 
 
 if __name__ == "__main__":

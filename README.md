@@ -14,16 +14,22 @@
 
 [`examples/manipulator_demo.py`](examples/manipulator_demo.py) drives either 7-DoF arm along a figure-eight with damped-least-squares differential IK. The robot XML is loaded unmodified from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie). The demo draws:
 
-- the plan (cyan) and the actual TCP trail (magenta)
-- the target point, plus its desired orientation as faint axes
-- the actual TCP frame, and a frame on every link
+- the plan (cyan) inside a faint workspace box (`box`), and the actual TCP trail (magenta)
+- the target point, plus its desired orientation as faint axes (`frame_at`)
+- the actual TCP frame, every joint's axis (`joint_axis`, labelled when near a limit) and the arm's center of mass (`body_com`)
 - the TCP velocity
+- contact forces on a spring-loaded bumper that the gripper brushes once per lap (`contacts`), plus contact marks that expire on their own (`ttl_frames`)
 - a HUD with position/orientation error and **joint-limit usage per joint**
+
+The loop never calls `clear()`: the plan and box are drawn once and everything else is keyed.
 
 ```bash
 python examples/manipulator_demo.py                # Franka Panda
 python examples/manipulator_demo.py --robot iiwa   # KUKA LBR iiwa 14
+python examples/manipulator_demo.py --no-bumper    # free space, no contacts
 ```
+
+The bumper is added at load time with `MjSpec` (MuJoCo ≥ 3.3); the robot XML itself is not edited.
 
 The robot models are not redistributed here. On first run the script fetches them from Menagerie (Apache-2.0, ~55 MB), or it uses `MUJOCO_MENAGERIE_PATH` if you already have a checkout.
 
