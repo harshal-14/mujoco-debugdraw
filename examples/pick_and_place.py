@@ -3,6 +3,7 @@
 Run:
     python examples/pick_and_place.py              # passive viewer; loops with a new layout each round
     python examples/pick_and_place.py --seed 7     # a different first layout
+    MUJOCO_GL=egl python examples/pick_and_place.py --record assets/pick_and_place.gif   # 3x speed
 (macOS: use mjpython)
 
 The Panda is MuJoCo Menagerie's model, loaded unmodified (see manipulator_demo.py
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import collections
 import dataclasses
+import pathlib
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Union
@@ -382,10 +384,11 @@ class PickPlace:
 def draw_static(draw: DebugDraw) -> None:
     """Drawn once; stays queued until the next round's clear()."""
     draw.box([*TRAY_CENTER, TRAY_FLOOR + 0.02], [*(TRAY_INNER - 0.005), 0.02], color=[0.2, 1.0, 0.3, 0.12],
-             label="tray", key="tray")
+             key="tray")
 
 
-def draw_debug(draw: DebugDraw, task: PickPlace, tcp, R, p_des, yaw_des, carried: collections.deque) -> None:
+def draw_debug(draw: DebugDraw, task: PickPlace, tcp, R, p_des, yaw_des, carried: collections.deque,
+               label_frames: int = 90) -> None:
     m, d, thing = task.m, task.d, task.thing
     if thing is None:
         return
@@ -427,7 +430,7 @@ def draw_debug(draw: DebugDraw, task: PickPlace, tcp, R, p_des, yaw_des, carried
     while task.events:
         name, where = task.events.pop(0)
         if name not in ("GRASP", "RELEASE"):
-            draw.point(where, color="white", size=0.004, label=name.lower(), ttl_frames=90)
+            draw.point(where, color="white", size=0.004, label=name.lower(), ttl_frames=label_frames)
 
     grip = max(0.0, -float(d.actuator_force[7]))  # tendon force; negative while squeezing
     gap = (d.qpos[7] + d.qpos[8]) * 1000
@@ -451,43 +454,50 @@ def draw_debug(draw: DebugDraw, task: PickPlace, tcp, R, p_des, yaw_des, carried
 # ------------------------------------------------------------------------------ main
 
 
-def main() -> None:
-    import mujoco.viewer
-
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--seed", type=int, default=0, help="seed for the object layout jitter")
-    args = ap.parse_args()
-
+def setup(seed: int):
     things = make_things()
-    cfg, model = build_scene(things, args.seed)
+    cfg, model = build_scene(things, seed)
     data = mujoco.MjData(model)
     ik = DiffIK(model, cfg)
-    rng = np.random.default_rng(args.seed)
+    rng = np.random.default_rng(seed)
     reset(model, data, cfg, ik, things, rng)
     task = PickPlace(model, data, ik, things, home_R=ik.tcp(data)[1].copy())
+    return things, cfg, model, data, ik, rng, task
+
+
+def advance(model, data, ik: DiffIK, task: PickPlace, n_steps: int, draw: DebugDraw, carried) -> tuple:
+    """Run n_steps of control and physics, then queue this frame's drawing."""
+    index = task.index
+    for _ in range(n_steps):
+        tcp, _ = ik.tcp(data)
+        p_des, yaw_des, v_des, grip = task.command(tcp)
+        ik(data, p_des, yaw_matrix(yaw_des) @ task.home_R, v_des)
+        data.ctrl[7] = grip
+        mujoco.mj_step(model, data)
+    if task.index != index:  # new object: forget the last one's carried path
+        carried.clear()
+        draw.remove("carried")
+    return p_des, yaw_des
+
+
+def run_viewer(seed: int) -> None:
+    import mujoco.viewer
+
+    things, cfg, model, data, ik, rng, task = setup(seed)
     steps = max(1, int(round((1 / 60) / model.opt.timestep)))
     carried: collections.deque = collections.deque(maxlen=180)
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
-        viewer.cam.lookat[:] = [0.50, 0.0, 0.30]
-        viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 1.25, 155, -28
+        viewer.cam.lookat[:] = [0.52, 0.0, 0.30]  # facing the robot, so the hand works in front of the arm
+        viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 1.1, 180, -30
         draw = DebugDraw(model, data, viewer)
         draw_static(draw)
         done_at = None
         while viewer.is_running():
             t0 = time.time()
-            index = task.index
-            for _ in range(steps):
-                tcp, _ = ik.tcp(data)
-                p_des, yaw_des, v_des, grip = task.command(tcp)
-                ik(data, p_des, yaw_matrix(yaw_des) @ task.home_R, v_des)
-                data.ctrl[7] = grip
-                mujoco.mj_step(model, data)
-            if task.index != index:
-                carried.clear()
-                draw.remove("carried")
+            p_des, yaw_des = advance(model, data, ik, task, steps, draw, carried)
             tcp, R = ik.tcp(data)
-            draw_debug(draw, task, tcp, R, p_des, yaw_des, carried)
+            draw_debug(draw, task, tcp, R, p_des, yaw_des, carried, label_frames=90)  # 1.5 s at 60 fps
             draw.sync()
             viewer.sync()
 
@@ -501,6 +511,53 @@ def main() -> None:
                     draw_static(draw)
                     done_at = None
             time.sleep(max(0.0, steps * model.opt.timestep - (time.time() - t0)))
+
+
+def record(out: pathlib.Path, seed: int, speed: float, fps: int = 15, width: int = 640, height: int = 440) -> None:
+    """Render one full round offscreen to a GIF, sped up by `speed`."""
+    from PIL import Image
+
+    from record_demo import hud  # same Pillow HUD compositor as the other GIFs
+
+    things, cfg, model, data, ik, rng, task = setup(seed)
+    renderer = mujoco.Renderer(model, height, width)
+    cam = mujoco.MjvCamera()
+    cam.lookat[:] = [0.47, -0.01, 0.33]  # facing the robot, so the hand works in front of the arm
+    cam.distance, cam.azimuth, cam.elevation = 0.78, 180, -36
+    draw = DebugDraw(model, data, renderer)
+    draw_static(draw)
+    carried: collections.deque = collections.deque(maxlen=180)
+    steps = max(1, int(round(speed / (fps * model.opt.timestep))))
+    label_frames = max(1, round(1.5 * fps / speed))  # 1.5 s of sim time
+    frames, done_at = [], None
+    while done_at is None or data.time - done_at < 1.0:
+        p_des, yaw_des = advance(model, data, ik, task, steps, draw, carried)
+        tcp, R = ik.tcp(data)
+        draw_debug(draw, task, tcp, R, p_des, yaw_des, carried, label_frames=label_frames)
+        renderer.update_scene(data, camera=cam)
+        draw.sync()
+        frames.append(hud(renderer.render(), draw.texts, width, height, font_size=12))
+        if task.done and done_at is None:
+            done_at = data.time
+    renderer.close()
+
+    pal = [Image.fromarray(f).quantize(colors=256, method=Image.Quantize.MAXCOVERAGE, dither=Image.Dither.NONE)
+           for f in frames]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pal[0].save(out, save_all=True, append_images=pal[1:], duration=int(1000 / fps), loop=0, optimize=True)
+    print(f"wrote {out} ({len(frames)} frames, {speed:g}x speed)")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--seed", type=int, default=0, help="seed for the object layout jitter")
+    ap.add_argument("--record", type=pathlib.Path, help="render one round to a GIF offscreen instead of opening the viewer")
+    ap.add_argument("--speed", type=float, default=3.0, help="playback speed-up for --record (default 3)")
+    args = ap.parse_args()
+    if args.record:
+        record(args.record, args.seed, args.speed)
+    else:
+        run_viewer(args.seed)
 
 
 if __name__ == "__main__":

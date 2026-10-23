@@ -26,8 +26,8 @@ classifiers = [
 dev = ["pytest>=7", "pillow>=10"]
 
 [project.urls]
-Homepage = "https://github.com/harshalbhat/mujoco-debugdraw"
-Issues = "https://github.com/harshalbhat/mujoco-debugdraw/issues"
+Homepage = "https://github.com/harshal-14/mujoco-debugdraw"
+Issues = "https://github.com/harshal-14/mujoco-debugdraw/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mujoco_debugdraw"]

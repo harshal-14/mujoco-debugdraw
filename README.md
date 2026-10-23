@@ -33,10 +33,13 @@ The bumper is added at load time with `MjSpec` (MuJoCo ≥ 3.3); the robot XML i
 
 ### Tabletop pick and place
 
-[`examples/pick_and_place.py`](examples/pick_and_place.py) has the Panda pick a raspberry, a rubber duck, two rocks and a light bulb off a table and drop them in a tray, with a new layout every round. For the object being picked it draws the bounding box (green while held, red if it slips in the grip), the center of mass and mass, the grip force on each finger, the remaining waypoints, and the grasp, target and TCP frames. A HUD shows the phase, grip force, finger gap and slip.
+![Franka Panda picking a raspberry, a rubber duck, two rocks and a light bulb into a tray, with grip forces, bounding boxes and waypoints drawn by DebugDraw](assets/pick_and_place.gif)
+
+*3× speed.* [`examples/pick_and_place.py`](examples/pick_and_place.py) has the Panda pick a raspberry, a rubber duck, two rocks and a light bulb off a table and drop them in a tray, with a new layout every round. For the object being picked it draws the bounding box (green while held, red if it slips in the grip), the center of mass and mass, the grip force on each finger, the remaining waypoints, and the grasp, target and TCP frames. A HUD shows the phase, grip force, finger gap and slip.
 
 ```bash
 python examples/pick_and_place.py
+python examples/pick_and_place.py --record assets/pick_and_place.gif   # offscreen GIF of one round
 ```
 
 The robot models are not redistributed here. On first run the script fetches them from Menagerie (Apache-2.0, ~55 MB), or it uses `MUJOCO_MENAGERIE_PATH` if you already have a checkout.
@@ -44,7 +47,7 @@ The robot models are not redistributed here. On first run the script fetches the
 ## Install
 
 ```bash
-pip install git+https://github.com/harshalbhat/mujoco-debugdraw
+pip install git+https://github.com/harshal-14/mujoco-debugdraw
 ```
 
 Once the package is on PyPI, this becomes `pip install mujoco-debugdraw`. The only dependencies are `mujoco` and `numpy`. It needs no ROS, Docker, CUDA, or browser.
@@ -185,7 +188,7 @@ People keep asking for an easier way to add custom geoms and frames to the passi
 ## Contributing
 
 ```bash
-git clone https://github.com/harshalbhat/mujoco-debugdraw && cd mujoco-debugdraw
+git clone https://github.com/harshal-14/mujoco-debugdraw && cd mujoco-debugdraw
 pip install -e ".[dev]"
 pytest                                   # unit + scene tests, no display needed
 MUJOCO_GL=egl pytest                     # also runs the offscreen pixel tests
