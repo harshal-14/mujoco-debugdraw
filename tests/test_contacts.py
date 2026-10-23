@@ -171,13 +171,16 @@ def test_contacts_are_a_snapshot(stack):
         assert np.array_equal(a0, b0) and np.array_equal(a1, b1)
 
 
-# Contacts inside the gap (margin - gap < dist < margin) are reported in
-# data.contact but excluded from the solver, so they have efc_address == -1.
+# Contacts in the "gap" band are reported in data.contact but excluded from the
+# solver, so they have efc_address == -1. Older MuJoCo puts the band at
+# margin - gap < dist < margin; newer MuJoCo (3.15 at least) at
+# margin < dist < margin + gap. With margin = gap = 2 cm, a box 1 cm above
+# the floor is in the band on old versions and 3 cm above it is on new ones.
 GAP_XML = """
 <mujoco>
   <worldbody>
     <geom type="plane" size="1 1 .1" margin="0.02" gap="0.02"/>
-    <body pos="0 0 0.06">
+    <body>
       <freejoint/>
       <geom type="box" size="0.05 0.05 0.05"/>
     </body>
@@ -186,11 +189,19 @@ GAP_XML = """
 """
 
 
+def _in_gap_state(m):
+    for height in (0.01, 0.03):
+        d = mujoco.MjData(m)
+        d.qpos[2] = 0.05 + height  # box half-size + clearance
+        mujoco.mj_forward(m, d)
+        if d.ncon > 0 and all(c.efc_address < 0 for c in _contacts(d)):
+            return d
+    pytest.fail("could not place the box so that all its contacts are in the gap")
+
+
 def test_contact_outside_solver_gets_normal_but_no_force():
     m = mujoco.MjModel.from_xml_string(GAP_XML)
-    d = mujoco.MjData(m)
-    mujoco.mj_forward(m, d)
-    assert d.ncon > 0 and all(c.efc_address < 0 for c in _contacts(d))
+    d = _in_gap_state(m)
     draw = DebugDraw(m, d, mujoco.MjvScene(m, maxgeom=100))
     draw.contacts()
     assert len(_arrows(draw, NORMAL)) == d.ncon

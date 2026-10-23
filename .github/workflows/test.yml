@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ubuntu-latest is moving to 26.04; pin until the GL packages below are checked there
     strategy:
       fail-fast: false
       matrix:
