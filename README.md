@@ -31,6 +31,14 @@ python examples/manipulator_demo.py --no-bumper    # free space, no contacts
 
 The bumper is added at load time with `MjSpec` (MuJoCo ≥ 3.3); the robot XML itself is not edited.
 
+### Tabletop pick and place
+
+[`examples/pick_and_place.py`](examples/pick_and_place.py) has the Panda pick a raspberry, a rubber duck, two rocks and a light bulb off a table and drop them in a tray, with a new layout every round. For the object being picked it draws the bounding box (green while held, red if it slips in the grip), the center of mass and mass, the grip force on each finger, the remaining waypoints, and the grasp, target and TCP frames. A HUD shows the phase, grip force, finger gap and slip.
+
+```bash
+python examples/pick_and_place.py
+```
+
 The robot models are not redistributed here. On first run the script fetches them from Menagerie (Apache-2.0, ~55 MB), or it uses `MUJOCO_MENAGERIE_PATH` if you already have a checkout.
 
 ## Install
